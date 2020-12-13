@@ -2,11 +2,15 @@ import logging
 
 import pykka
 from mopidy import core
+import time
+import subprocess
 
 logger = logging.getLogger(__name__)
 
 
 class RaspberryGPIOFrontend(pykka.ThreadingActor, core.CoreListener):
+    last_presses = {}
+
     def __init__(self, config, core):
         super().__init__()
         import RPi.GPIO as GPIO
@@ -46,45 +50,68 @@ class RaspberryGPIOFrontend(pykka.ThreadingActor, core.CoreListener):
 
     def gpio_event(self, pin):
         settings = self.pin_settings[pin]
-        self.dispatch_input(settings)
+        n = self.log_press(settings.event)
+        self.dispatch_input(settings, n)
 
-    def dispatch_input(self, settings):
+    def log_press(self, event):
+        now = time.time_ns() // 1000000
+        if event in self.last_presses:
+            press = self.last_presses[event]
+            if now - press["last_time"] > 200:
+                self.last_presses[event] = { "last_time": now, "n": 1 }
+                return 1
+            else:
+                self.last_presses[event] = { "last_time": now, "n": press["n"] + 1 }
+                return press["n"] + 1
+
+        else:
+            self.last_presses[event] = { "last_time": now, "n": 1 }
+            return 1
+
+
+
+    def dispatch_input(self, settings, n):
         handler_name = f"handle_{settings.event}"
         try:
-            getattr(self, handler_name)(settings.options)
+            getattr(self, handler_name)(settings.options, n)
         except AttributeError:
             raise RuntimeError(
                 f"Could not find input handler for event: {settings.event}"
             )
 
-    def handle_play_pause(self, config):
-        if self.core.playback.get_state().get() == core.PlaybackState.PLAYING:
+    def handle_play_pause(self, config, n):
+        if n == 2:
+            logger.info("Good bye!")
+            subprocess.run(["sudo", "shutdown", "-h", "now"])
+
+        elif self.core.playback.get_state().get() == core.PlaybackState.PLAYING:
             self.core.playback.pause()
         else:
             self.core.playback.play()
 
-    def handle_play_stop(self, config):
+    def handle_play_stop(self, config, n):
         if self.core.playback.get_state().get() == core.PlaybackState.PLAYING:
             self.core.playback.stop()
         else:
             self.core.playback.play()
 
-    def handle_next(self, config):
+    def handle_next(self, config, n):
         self.core.playback.next()
 
-    def handle_prev(self, config):
+    def handle_prev(self, config, n):
         self.core.playback.previous()
 
-    def handle_volume_up(self, config):
+    def handle_volume_up(self, config, n):
         step = int(config.get("step", 5))
         volume = self.core.mixer.get_volume().get()
         volume += step
         volume = min(volume, 100)
         self.core.mixer.set_volume(volume)
 
-    def handle_volume_down(self, config):
+    def handle_volume_down(self, config, n):
         step = int(config.get("step", 5))
         volume = self.core.mixer.get_volume().get()
         volume -= step
         volume = max(volume, 0)
         self.core.mixer.set_volume(volume)
+
