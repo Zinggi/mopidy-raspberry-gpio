@@ -17,6 +17,28 @@ Mopidy-Raspberry-GPIO
 Mopidy extension for GPIO input on a Raspberry Pi
 
 
+
+DEV
+============
+
+install ext (once to link):
+`sudo python3 -m pip3 install -e .`
+
+restart (to load code):
+`systemctl restart mopidy.service`
+
+see logs:
+`journalctl -u mopidy -f`
+
+
+Allow shutdown:
+`sudo visudo`
+
+add line:
+`mopidy ALL=NOPASSWD: /usr/sbin/shutdown`
+
+
+
 Installation
 ============
 
